@@ -27,6 +27,23 @@ def macarthur(t, y, EOparams, sysParams, noSpec, noRes, impactFunc, sensFunc):
     dY = np.concatenate((dr,ds),axis=0)
     return dY
 
+def gLV(t, y, EOparams, sysParams, noSpec, noRes, impactFunc, sensFunc):
+    repRates = sysParams['repRates']
+    ms = sysParams['ms']
+
+    rs = y[:noRes]
+    specs = y[noRes:]
+
+    dr = np.zeros(rs.shape)
+    for bet in range(noSpec):
+        dr += impactFunc(rs,bet,EOparams)*specs[bet]
+    for rho in range(noRes):
+        dr[rho] += repRates[rho]*rs[rho]
+    ds = np.array([(sensFunc(rs,alph,EOparams) - ms[alph]) * specs[alph] for alph in range(noSpec)])
+
+    dY = np.concatenate((dr,ds),axis=0)
+    return dY
+
 #Chemostat model
 def chemostat(t, y, EOparams, sysParams, noSpec, noRes, impactFunc, sensFunc):
     rs = y[:noRes]
@@ -193,7 +210,7 @@ class EOsimsuite:
             Rnoise = np.broadcast_to(R0,(self.noX,self.noR)) + np.random.normal(0,self.sysParams['resNoise'],(self.noX,self.noR))
             
             self.R0 = Rnoise.flatten()
-        else: #If a well-mixed model (chemostat, batch or serial transfer)
+        else: #If a well-mixed model (chemostat, batch, gLV or serial transfer)
             self.B0 = B0
             self.R0 = R0
         
@@ -310,7 +327,7 @@ class EOsimsuite:
     Function that actually runs the specified numerical integration
     """
     def simEOmodel(self,modelType):
-        if modelType == 'Chemostat' or modelType == 'Batch' or modelType == 'SerialTransfer' or modelType == 'MacArthur':
+        if modelType == 'Chemostat' or modelType == 'Batch' or modelType == 'SerialTransfer' or modelType == 'MacArthur' or modelType == 'gLV':
             inArgs = (self.EOparams,self.sysParams,self.noS,self.noR,self.impactFunc,self.sensFunc)
         elif modelType == 'Flowcell' or modelType == 'Colony':
             inArgs = (self.EOparams,self.sysParams,self.noS,self.noR,self.noX,self.impactFunc,self.sensFunc)
@@ -318,6 +335,13 @@ class EOsimsuite:
         if modelType == 'Chemostat':
             tSteps = np.arange(self.tSpan[0],self.tSpan[1],self.dt)
             self.solution = solve_ivp(fun=chemostat, t_span=self.tSpan, y0=np.concatenate((self.R0,self.B0),axis=0), t_eval=tSteps, args=inArgs)
+        
+            self.resTimeseries = self.solution.y[:self.noR,:]
+            self.specTimeseries = self.solution.y[self.noR:,:]
+
+        if modelType == 'gLV':
+            tSteps = np.arange(self.tSpan[0],self.tSpan[1],self.dt)
+            self.solution = solve_ivp(fun=gLV, t_span=self.tSpan, y0=np.concatenate((self.R0,self.B0),axis=0), t_eval=tSteps, args=inArgs)
         
             self.resTimeseries = self.solution.y[:self.noR,:]
             self.specTimeseries = self.solution.y[self.noR:,:]
@@ -409,7 +433,7 @@ class EOsimsuite:
             
     
     def plotSolutionTimecourse(self):
-        if self.modelType == 'Chemostat' or self.modelType == 'Batch' or self.modelType == 'SerialTransfer' or self.modelType == 'MacArthur':
+        if self.modelType == 'Chemostat' or self.modelType == 'Batch' or self.modelType == 'SerialTransfer' or self.modelType == 'MacArthur' or self.modelType == 'gLV':
             tSteps = np.arange(self.tSpan[0],self.tSpan[1],self.dt)
         
             plt.plot(tSteps,self.resTimeseries.T,'r')

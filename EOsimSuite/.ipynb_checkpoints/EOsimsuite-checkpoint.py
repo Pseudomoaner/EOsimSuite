@@ -7,6 +7,43 @@ from scipy.integrate import solve_ivp
 Define equations that will get input into solve_ivp. Each represents
 placing the specified EO system into a different experimental setting.
 """
+#Macarthur model (with biotic resources)
+
+def macarthur(t, y, EOparams, sysParams, noSpec, noRes, impactFunc, sensFunc):
+    Ks = sysParams['Ks']
+    vs = sysParams['vs']
+    ts = sysParams['ts']
+    
+    rs = y[:noRes]
+    specs = y[noRes:]
+
+    dr = np.zeros(rs.shape)
+    for bet in range(noSpec):
+        dr += impactFunc(rs,bet,EOparams)*specs[bet]
+    for rho in range(noRes):
+        dr[rho] += (Ks[rho] - rs[rho])*vs[rho]*rs[rho]/Ks[rho] #Sigma for a logistic resource  
+    ds = np.array([(sensFunc(rs,alph,EOparams) - ts[alph]) * specs[alph] for alph in range(noSpec)])
+
+    dY = np.concatenate((dr,ds),axis=0)
+    return dY
+
+def gLV(t, y, EOparams, sysParams, noSpec, noRes, impactFunc, sensFunc):
+    repRates = sysParams['repRates']
+    ms = sysParams['ms']
+
+    rs = y[:noRes]
+    specs = y[noRes:]
+
+    dr = np.zeros(rs.shape)
+    for bet in range(noSpec):
+        dr += impactFunc(rs,bet,EOparams)*specs[bet]
+    for rho in range(noRes):
+        dr[rho] += repRates[rho]*rs[rho]
+    ds = np.array([(sensFunc(rs,alph,EOparams) - ms[alph]) * specs[alph] for alph in range(noSpec)])
+
+    dY = np.concatenate((dr,ds),axis=0)
+    return dY
+
 #Chemostat model
 def chemostat(t, y, EOparams, sysParams, noSpec, noRes, impactFunc, sensFunc):
     rs = y[:noRes]
@@ -173,7 +210,7 @@ class EOsimsuite:
             Rnoise = np.broadcast_to(R0,(self.noX,self.noR)) + np.random.normal(0,self.sysParams['resNoise'],(self.noX,self.noR))
             
             self.R0 = Rnoise.flatten()
-        else: #If a well-mixed model (chemostat, batch or serial transfer)
+        else: #If a well-mixed model (chemostat, batch, gLV or serial transfer)
             self.B0 = B0
             self.R0 = R0
         
@@ -222,11 +259,11 @@ class EOsimsuite:
                 self.sysParams['noTrans'] = int(np.ceil(totT/kwargs['transT']))
     
     #Sets the starting resource concentrations to give rise to a stable point (if defined and feasible)
-    def set_stationaryStart(self):
+    def set_stationaryStart(self,method):
         if not hasattr(self,'rStar'):
             raise AttributeError('rStar not available! Try running set_findRstar() first.')
         if  not hasattr(self,'xStar'):
-            self.findXstar('Exact')
+            self.findXstar(method)
             
         if sum(self.rStar > 0) < len(self.rStar):
             raise AssertionError('Stationary resource distribution is not feasible!')
@@ -290,7 +327,7 @@ class EOsimsuite:
     Function that actually runs the specified numerical integration
     """
     def simEOmodel(self,modelType):
-        if modelType == 'Chemostat' or modelType == 'Batch' or modelType == 'SerialTransfer':
+        if modelType == 'Chemostat' or modelType == 'Batch' or modelType == 'SerialTransfer' or modelType == 'MacArthur' or modelType == 'gLV':
             inArgs = (self.EOparams,self.sysParams,self.noS,self.noR,self.impactFunc,self.sensFunc)
         elif modelType == 'Flowcell' or modelType == 'Colony':
             inArgs = (self.EOparams,self.sysParams,self.noS,self.noR,self.noX,self.impactFunc,self.sensFunc)
@@ -298,6 +335,20 @@ class EOsimsuite:
         if modelType == 'Chemostat':
             tSteps = np.arange(self.tSpan[0],self.tSpan[1],self.dt)
             self.solution = solve_ivp(fun=chemostat, t_span=self.tSpan, y0=np.concatenate((self.R0,self.B0),axis=0), t_eval=tSteps, args=inArgs)
+        
+            self.resTimeseries = self.solution.y[:self.noR,:]
+            self.specTimeseries = self.solution.y[self.noR:,:]
+
+        if modelType == 'gLV':
+            tSteps = np.arange(self.tSpan[0],self.tSpan[1],self.dt)
+            self.solution = solve_ivp(fun=gLV, t_span=self.tSpan, y0=np.concatenate((self.R0,self.B0),axis=0), t_eval=tSteps, args=inArgs)
+        
+            self.resTimeseries = self.solution.y[:self.noR,:]
+            self.specTimeseries = self.solution.y[self.noR:,:]
+        
+        elif modelType == 'MacArthur':
+            tSteps = np.arange(self.tSpan[0],self.tSpan[1],self.dt)
+            self.solution = solve_ivp(fun=macarthur, t_span=self.tSpan, y0=np.concatenate((self.R0,self.B0),axis=0), t_eval=tSteps, args=inArgs)
         
             self.resTimeseries = self.solution.y[:self.noR,:]
             self.specTimeseries = self.solution.y[self.noR:,:]
@@ -382,7 +433,7 @@ class EOsimsuite:
             
     
     def plotSolutionTimecourse(self):
-        if self.modelType == 'Chemostat' or self.modelType == 'Batch' or self.modelType == 'SerialTransfer':
+        if self.modelType == 'Chemostat' or self.modelType == 'Batch' or self.modelType == 'SerialTransfer' or self.modelType == 'MacArthur' or self.modelType == 'gLV':
             tSteps = np.arange(self.tSpan[0],self.tSpan[1],self.dt)
         
             plt.plot(tSteps,self.resTimeseries.T,'r')
